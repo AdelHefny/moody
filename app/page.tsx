@@ -22,6 +22,8 @@ export default function Home() {
   const [submitting, setSubmitting] = useState(false);
   const [todayMoodImage, setTodayMoodImage] = useState<string>('');
   const [submitProgress, setSubmitProgress] = useState(0);
+  const [errorMessage, setErrorMessage] = useState('');
+  const [isFormDisabled, setIsFormDisabled] = useState(false);
 
   useEffect(() => {
     if (formRef.current) {
@@ -135,6 +137,7 @@ export default function Home() {
         return prev + 10;
       });
     }, 100);
+    let responseData: any = null;
     try {
       const formattedDate = new Date().toISOString();
       const response = await fetch('https://adelhefny.app.n8n.cloud/webhook/mood/submit', {
@@ -144,10 +147,16 @@ export default function Home() {
         },
         body: JSON.stringify({ mood: description, date: formattedDate }),
       });
+      let responseData: any = null;
+      const contentType = response.headers.get('content-type');
+      if (contentType && contentType.includes('application/json')) {
+          responseData = await response.json();
+      } else {
+        throw new Error('Response is not JSON');
+      }
       
-      if (response.ok) {
-        const data = await response.json();
-        const updatedMood = Array.isArray(data) ? data[0] : data;
+      if (response.ok && responseData && !responseData.error) {
+        const updatedMood = Array.isArray(responseData) ? responseData[0] : responseData;
         // Update moods with the new data
         setMoods(prev => {
           const today = new Date(Date.now()).toISOString();
@@ -164,20 +173,50 @@ export default function Home() {
         setTodayMoodImage(updatedMood.image_url);
         // Reset form
         (e.target as HTMLFormElement).reset();
+        setErrorMessage('');
+      } else if (responseData.error === 'duplicate ip address') {
+        // Handle duplicate submission
+        setErrorMessage('You have already submitted a mood today. Only one submission per day is allowed.');
+        setIsFormDisabled(true);
+        setSubmitting(false);
+        setSubmitProgress(0);
+        return;
       } else {
         console.error('Failed to submit mood');
+        setErrorMessage('An error occurred while submitting your mood. Please try again.');
       }
     } catch (error) {
       console.error('Error submitting mood:', error);
+      setErrorMessage('An error occurred while submitting your mood. Please try again.');
+      responseData = null;
     } finally {
-      setSubmitting(false);
-      setSubmitProgress(100);
-      setTimeout(() => setSubmitProgress(0), 500);
+      if (!responseData || responseData.error !== 'duplicate ip address') {
+        setSubmitting(false);
+        setSubmitProgress(100);
+        setTimeout(() => setSubmitProgress(0), 500);
+      }
     }
   };
 
   return (
-    <div className="flex flex-col min-h-screen px-4 py-8 fade-in" style={todayMoodImage ? { backgroundImage: `url(${todayMoodImage})`, backgroundSize: 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat', backgroundAttachment: 'fixed' } : { background: 'var(--background)' }}>
+    <div className="flex flex-col min-h-screen px-4 py-8 fade-in" style={todayMoodImage ? {} : { background: 'var(--background)' }}>
+      {todayMoodImage && (
+        <Image
+          src={todayMoodImage}
+          alt="Background"
+          width={1920}
+          height={1080}
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            width: '100vw',
+            height: '100vh',
+            zIndex: -1,
+            objectFit: 'cover'
+          }}
+        />
+      )}
       <div className="flex items-center justify-center flex-1">
         <div
           ref={formRef}
@@ -185,17 +224,19 @@ export default function Home() {
         >
           <h1 className="text-2xl font-semibold mb-6" style={{ color: 'var(--foreground)' }}>How are you feeling?</h1>
           <form onSubmit={handleSubmit} className="space-y-4">
+            {errorMessage && <p className="text-red-500 text-sm">{errorMessage}</p>}
             <input
               name="mood"
               type="text"
               placeholder="Enter your mood..."
               className="input"
+              disabled={isFormDisabled}
               required
             />
             <button
               ref={buttonRef}
               type="submit"
-              disabled={submitting}
+              disabled={submitting || isFormDisabled}
               className="btn relative"
             >
               {submitting ? (
